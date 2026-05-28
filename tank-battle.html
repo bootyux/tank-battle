@@ -61,6 +61,56 @@
     text-align: center;
     letter-spacing: 1px;
   }
+  #select-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+  }
+  #select-overlay h2 {
+    color: #0f0;
+    font-size: 22px;
+    margin-bottom: 20px;
+    letter-spacing: 2px;
+    text-shadow: 0 0 15px #0f0;
+  }
+  #select-overlay .btn-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  #select-overlay button {
+    background: #111;
+    color: #0f0;
+    border: 2px solid #0f0;
+    padding: 10px 20px;
+    font-size: 18px;
+    font-family: 'Courier New', monospace;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+    min-width: 60px;
+  }
+  #select-overlay button:hover {
+    background: #0f0;
+    color: #000;
+    box-shadow: 0 0 20px #0f0;
+  }
+  #remaining-display {
+    position: absolute;
+    top: 34px; right: 16px;
+    color: #f80;
+    font-size: 12px;
+    font-weight: bold;
+    text-shadow: 0 0 8px #f80;
+    pointer-events: none;
+    letter-spacing: 1px;
+  }
 </style>
 </head>
 <body>
@@ -68,9 +118,20 @@
 <div id="game-container">
   <canvas id="game"></canvas>
   <div class="ui-item" style="position:absolute;top:10px;left:16px;" id="score">SCORE: 0</div>
-  <div class="ui-item" style="position:absolute;top:10px;right:16px;" id="lives">❤️❤️❤️</div>
+  <div class="ui-item" style="position:absolute;top:10px;right:16px;" id="lives">❤️❤️❤️❤️❤️</div>
+  <div id="remaining-display"></div>
   <div id="message"></div>
   <div id="controls-info">⬆⬇⬅➡ 移动 &nbsp;|&nbsp; 空格 射击 &nbsp;|&nbsp; R 重新开始</div>
+  <div id="select-overlay">
+    <h2>选择敌人数量</h2>
+    <div class="btn-row">
+      <button onclick="startGameWithEnemies(10)">10</button>
+      <button onclick="startGameWithEnemies(15)">15</button>
+      <button onclick="startGameWithEnemies(20)">20</button>
+      <button onclick="startGameWithEnemies(25)">25</button>
+      <button onclick="startGameWithEnemies(30)">30</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -82,9 +143,10 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
 // --- Canvas Size ---
-const COLS = 26;
-const ROWS = 26;
+const COLS = 36;
+const ROWS = 36;
 const CELL = 24;
+const GAME_SPEED = 0.2;
 canvas.width = COLS * CELL;
 canvas.height = ROWS * CELL;
 
@@ -95,10 +157,15 @@ const DY = [-1, 0, 1, 0];
 
 // --- Game State ---
 let score = 0;
-let lives = 3;
+let lives = 5;
 let level = 1;
 let gameOver = false;
 let gameWin = false;
+let gameStarted = false;
+let totalEnemies = 0;
+let enemiesSpawned = 0;
+let enemiesKilled = 0;
+const MAX_ON_SCREEN = 5;
 let enemies = [];
 let bullets = [];
 let particles = [];
@@ -112,8 +179,10 @@ let shakeAmount = 0;
 
 // --- Input ---
 const keys = {};
+let spacePressed = false;
 window.addEventListener('keydown', e => {
   keys[e.key] = true;
+  if (e.key === ' ') spacePressed = true;
   if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'ArrowDown' ||
       e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     e.preventDefault();
@@ -200,10 +269,10 @@ class Tank {
     this.dir = dir;
     this.color = color;
     this.isPlayer = isPlayer;
-    this.speed = isPlayer ? 2.5 : 1.0 + level * 0.3;
+    this.speed = (isPlayer ? 2.5 : 1.0 + level * 0.3) * GAME_SPEED;
     this.alive = true;
     this.shootCooldown = 0;
-    this.shootDelay = isPlayer ? 15 : 60 - level * 3;
+    this.shootDelay = (isPlayer ? 15 : 60 - level * 3) / GAME_SPEED;
     this.hp = isPlayer ? 99 : 1;
     this.flashTimer = 0;
     this.aiDirChange = 0;
@@ -260,8 +329,9 @@ class Tank {
       }
     }
 
-    if (keys[' '] && this.shootCooldown <= 0) {
+    if (spacePressed && this.shootCooldown <= 0) {
       this.shoot();
+      spacePressed = false;
     }
   }
 
@@ -303,7 +373,7 @@ class Tank {
                       (this.dir === DIR.DOWN && Math.abs(dx) < CELL && dy > 0) ||
                       (this.dir === DIR.LEFT && Math.abs(dy) < CELL && dx < 0) ||
                       (this.dir === DIR.RIGHT && Math.abs(dy) < CELL && dx > 0);
-      if (aligned && Math.random() < 0.04) {
+      if (aligned && Math.random() < 0.008) {
         this.shoot();
       }
     }
@@ -394,7 +464,7 @@ class Bullet {
     this.y = y;
     this.dir = dir;
     this.isPlayer = isPlayer;
-    this.speed = isPlayer ? 5 : 3.5;
+    this.speed = (isPlayer ? 5 : 3.5) * GAME_SPEED;
     this.alive = true;
     this.size = isPlayer ? 3 : 2;
   }
@@ -431,7 +501,8 @@ class Bullet {
         this.alive = false;
         spawnExplosion(gx * CELL + CELL / 2, gy * CELL + CELL / 2, '#ff0', 30);
         addShake(8);
-        if (!gameOver) loseLife();
+        gameOver = true;
+        showMessage('GAME OVER', '#f44');
         return;
       }
     }
@@ -456,7 +527,8 @@ class Bullet {
           if (tank.isPlayer) {
             loseLife();
           } else {
-            score += 100 * level;
+            score += 100;
+            enemiesKilled++;
             updateUI();
           }
         } else {
@@ -508,7 +580,7 @@ class Explosion {
     spawnParticles(x, y, color, count);
   }
   update() {
-    this.radius += 1.5;
+    this.radius += 1.5 * GAME_SPEED;
     if (this.radius > this.maxRadius) this.alive = false;
   }
   draw(ctx) {
@@ -530,8 +602,8 @@ function allTanks() { return [player, ...enemies]; }
 function spawnParticles(x, y, color, count) {
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = 0.5 + Math.random() * 3;
-    particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, 15 + Math.random() * 20));
+    const speed = (0.5 + Math.random() * 3) * GAME_SPEED;
+    particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, (15 + Math.random() * 20) / GAME_SPEED));
   }
 }
 
@@ -579,7 +651,7 @@ class PowerUp {
     this.x = x; this.y = y;
     this.type = type; // 'speed', 'rapid', 'shield', 'bomb'
     this.alive = true;
-    this.timer = 600; // 10 seconds
+    this.timer = 600 / GAME_SPEED; // 10 seconds
   }
   update() {
     this.timer--;
@@ -595,19 +667,20 @@ class PowerUp {
   }
   apply() {
     switch (this.type) {
-      case 'speed': player.speed = Math.min(player.speed + 1, 6); setTimeout(() => { if (player) player.speed = 2.5; }, 8000); break;
-      case 'rapid': player.shootDelay = Math.max(player.shootDelay - 8, 4); setTimeout(() => { if (player) player.shootDelay = 15; }, 8000); break;
+      case 'speed': player.speed = Math.min(player.speed + 1 * GAME_SPEED, 6 * GAME_SPEED); setTimeout(() => { if (player) player.speed = 2.5 * GAME_SPEED; }, 8000 / GAME_SPEED); break;
+      case 'rapid': player.shootDelay = Math.max(player.shootDelay - 8 / GAME_SPEED, 4 / GAME_SPEED); setTimeout(() => { if (player) player.shootDelay = 15 / GAME_SPEED; }, 8000 / GAME_SPEED); break;
       case 'bomb':
         for (const enemy of enemies) {
           if (enemy.alive) {
             enemy.alive = false;
             spawnExplosion(enemy.getCenterX(), enemy.getCenterY(), '#f44', 15);
             score += 50;
+            enemiesKilled++;
           }
         }
         addShake(6);
         break;
-      case 'shield': player.flashTimer = 300; break; // ~5 sec invincibility
+      case 'shield': player.flashTimer = 300 / GAME_SPEED; break; // ~5 sec invincibility
     }
     score += 50;
     updateUI();
@@ -615,7 +688,7 @@ class PowerUp {
   draw(ctx) {
     if (!this.alive) return;
     const blink = Math.sin(this.timer * 0.1) > 0;
-    if (this.timer < 180 && !blink) return;
+    if (this.timer < 180 / GAME_SPEED && !blink) return;
     const colors = { speed: '#0ff', rapid: '#f0f', shield: '#ff0', bomb: '#f80' };
     const labels = { speed: 'S', rapid: 'R', shield: '🛡', bomb: '💣' };
     ctx.fillStyle = colors[this.type];
@@ -710,7 +783,7 @@ function drawForestOverlay() {
 }
 
 function gameLoop() {
-  if (!gameOver && !gameWin) {
+  if (gameStarted && !gameOver && !gameWin) {
     update();
   }
 
@@ -790,32 +863,31 @@ function update() {
   powerUps = powerUps.filter(p => p.alive);
   enemies = enemies.filter(e => e.alive);
 
-  // Spawn enemies
-  enemySpawnTimer--;
-  if (enemySpawnTimer <= 0 && enemies.length < 3 + level) {
-    spawnEnemy();
-    enemySpawnTimer = 180 - level * 10;
+  // Spawn enemies (max 5 on screen, up to totalEnemies)
+  if (enemiesSpawned < totalEnemies) {
+    enemySpawnTimer--;
+    if (enemySpawnTimer <= 0 && enemies.length < MAX_ON_SCREEN) {
+      spawnEnemy();
+      enemySpawnTimer = (180 - level * 10) / GAME_SPEED;
+    }
   }
 
   // Spawn power-ups
   powerUpTimer--;
   if (powerUpTimer <= 0) {
     spawnPowerUp();
-    powerUpTimer = 600 + Math.random() * 400;
+    powerUpTimer = (600 + Math.random() * 400) / GAME_SPEED;
   }
 
-  // Check if all enemies cleared (and max enemies for level)
-  if (enemies.length === 0 && enemySpawnTimer <= 0) {
-    level++;
-    if (level > 10) {
-      gameWin = true;
-      showMessage('YOU WIN! 🏆', '#ff0');
-    } else {
-      showMessage(`LEVEL ${level}`, '#0f0');
-      setTimeout(hideMessage, 2000);
-      initLevel();
-    }
+  // Win condition: all enemies killed
+  if (enemiesKilled >= totalEnemies && enemies.length === 0) {
+    gameWin = true;
+    showMessage('YOU WIN!', '#ff0');
   }
+
+  // Update remaining display
+  document.getElementById('remaining-display').textContent =
+    `剩余: ${totalEnemies - enemiesKilled}`;
 }
 
 function spawnEnemy() {
@@ -838,10 +910,11 @@ function spawnEnemy() {
   const colors = ['#e44', '#e84', '#e4e', '#4ee', '#4e4'];
   const color = colors[Math.floor(Math.random() * colors.length)];
   const enemy = new Tank(sx, sy, DIR.DOWN, color, false);
-  enemy.speed = 1.0 + level * 0.3;
+  enemy.speed = (1.0 + level * 0.3) * GAME_SPEED;
   enemy.px = sx * CELL;
   enemy.py = sy * CELL;
   enemies.push(enemy);
+  enemiesSpawned++;
 }
 
 function spawnPowerUp() {
@@ -869,16 +942,42 @@ function initLevel() {
   player.py = (ROWS - 3) * CELL;
   player.dir = DIR.UP;
   player.alive = true;
-  player.speed = 2.5;
-  player.shootDelay = 15;
-  enemySpawnTimer = 120;
-  powerUpTimer = 400;
+  player.speed = 2.5 * GAME_SPEED;
+  player.shootDelay = 15 / GAME_SPEED;
+  enemySpawnTimer = 120 / GAME_SPEED;
+  powerUpTimer = 400 / GAME_SPEED;
+}
+
+function startGameWithEnemies(count) {
+  totalEnemies = count;
+  enemiesSpawned = 0;
+  enemiesKilled = 0;
+  gameStarted = true;
+  gameOver = false;
+  gameWin = false;
+  score = 0;
+  lives = 5;
+  level = 1;
+  enemies = [];
+  bullets = [];
+  particles = [];
+  explosions = [];
+  powerUps = [];
+  shakeAmount = 0;
+  hideMessage();
+  document.getElementById('select-overlay').style.display = 'none';
+  map = generateMap(level);
+  player = new Tank(Math.floor(COLS / 2), ROWS - 3, DIR.UP, '#2a2', true);
+  player.px = Math.floor(COLS / 2) * CELL;
+  player.py = (ROWS - 3) * CELL;
+  enemySpawnTimer = 120 / GAME_SPEED;
+  powerUpTimer = 400 / GAME_SPEED;
+  updateUI();
+  document.getElementById('remaining-display').textContent = `剩余: ${totalEnemies}`;
 }
 
 function restartGame() {
-  score = 0;
-  lives = 3;
-  level = 1;
+  gameStarted = false;
   gameOver = false;
   gameWin = false;
   enemies = [];
@@ -888,22 +987,16 @@ function restartGame() {
   powerUps = [];
   shakeAmount = 0;
   hideMessage();
-  map = generateMap(level);
-  player = new Tank(Math.floor(COLS / 2), ROWS - 3, DIR.UP, '#2a2', true);
-  player.px = Math.floor(COLS / 2) * CELL;
-  player.py = (ROWS - 3) * CELL;
-  enemySpawnTimer = 120;
-  powerUpTimer = 400;
+  document.getElementById('select-overlay').style.display = 'flex';
+  document.getElementById('remaining-display').textContent = '';
   updateUI();
 }
 
 // --- Init ---
-map = generateMap(level);
+map = generateMap(1);
 player = new Tank(Math.floor(COLS / 2), ROWS - 3, DIR.UP, '#2a2', true);
 player.px = Math.floor(COLS / 2) * CELL;
 player.py = (ROWS - 3) * CELL;
-enemySpawnTimer = 120;
-powerUpTimer = 400;
 updateUI();
 gameLoop();
 </script>
